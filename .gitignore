@@ -1,0 +1,20 @@
+# Secretos — NUNCA subir a git
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Entornos / IDE
+.idea/
+.vscode/
+*.log
+
+# Scripts de un solo uso (ya ejecutados; no se versionan)
+scripts/bootstrap_paypal.py
