@@ -60,7 +60,8 @@ class Settings(BaseSettings):
         para conexiones internas que no usan SSL.
         """
         if not v:
-            return v
+            # .env con DATABASE_URL vacío no debe romper el arranque: usa el default.
+            return "postgresql+asyncpg://payments:payments@db:5432/payments"
         if v.startswith("postgres://"):
             v = "postgresql+asyncpg://" + v[len("postgres://"):]
         elif v.startswith("postgresql://"):
