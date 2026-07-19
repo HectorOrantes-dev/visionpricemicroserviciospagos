@@ -18,6 +18,7 @@ from src.paypal.infraestructure.routers.paypal_router import router as paypal_ro
 from src.shared.config import get_settings
 from src.shared.database import SessionLocal
 from src.shared.errors import register_exception_handlers
+from src.shared.gateway_key import GatewayKeyMiddleware
 from src.shared.idempotency import IdempotencyMiddleware
 from src.shared.security_headers import SecurityHeadersMiddleware
 from src.shared.subscriptions_router import router as subscriptions_router
@@ -73,6 +74,10 @@ def create_app() -> FastAPI:
 
     # Cabeceras de seguridad en todas las respuestas (más externo).
     app.add_middleware(SecurityHeadersMiddleware)
+
+    # Gateway: hoy opcional (ver src/shared/gateway_key.py) — valida el
+    # header si viene, no lo exige todavía. Webhooks de Conekta/PayPal excluidos.
+    app.add_middleware(GatewayKeyMiddleware, settings=settings)
 
     # Idempotencia: solo POST/PUT/PATCH con header `Idempotency-Key`.
     app.add_middleware(

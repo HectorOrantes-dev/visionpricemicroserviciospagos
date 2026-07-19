@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     payments_enabled: bool = True
     cors_allowed_origins: str = ""  # CSV: "https://app.visionprice.mx,https://..."
 
+    # --- API Gateway (tráfico entrante vía el gateway) ---
+    # Fase OPCIONAL: si está vacío, no-op. Si está seteado, valida X-Gateway-Key
+    # CUANDO viene pero no lo exige todavía (dual-accept mientras el móvil
+    # migra a pegarle al gateway en vez de acá directo). Los webhooks de
+    # Conekta/PayPal quedan siempre excluidos — esos los llama el proveedor
+    # de pagos directo, nunca van a traer este header.
+    gateway_shared_key: str = ""
+
     # --- Base de datos ---
     database_url: str = "postgresql+asyncpg://payments:payments@db:5432/payments"
 
