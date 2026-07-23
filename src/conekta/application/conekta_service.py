@@ -52,6 +52,14 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Conekta valida que "name"/"customer_info.name" tenga formato de nombre de
+# persona (rechaza emails, ids, etc. — confirmado contra el sandbox real).
+# El JWT de VisionPrice solo trae `sub` y `email` (ver create_access_token en
+# la API principal), nunca un nombre real, así que no hay nada mejor que
+# mandarle a Conekta. El email real sí se manda aparte, en el campo `email`.
+_CONEKTA_CUSTOMER_NAME = "Cliente Vision Price"
+
+
 class ConektaService:
     def __init__(
         self,
@@ -73,7 +81,7 @@ class ConektaService:
         customer = await self._customers.get(user.user_id, Provider.conekta)
         if customer is None:
             remote = await self._gateway.create_customer(
-                name=user.email or user.user_id,
+                name=_CONEKTA_CUSTOMER_NAME,
                 email=user.email,
                 card_token=card_token,
             )
@@ -194,7 +202,7 @@ class ConektaService:
             amount_cents=plan.price_mxn * 100,
             currency=plan.currency,
             allowed_payment_methods=methods,
-            customer_name=user.email or user.user_id,
+            customer_name=_CONEKTA_CUSTOMER_NAME,
             customer_email=user.email,
             expires_at=int(expires_dt.timestamp()),
             metadata={"internal_ref": internal_ref, "user_id": user.user_id},
