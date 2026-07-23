@@ -5,8 +5,12 @@ Las capas de dominio/aplicación lanzan estas excepciones agnósticas de HTTP.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+_log = logging.getLogger("pagos.errors")
 
 
 class DomainError(Exception):
@@ -77,6 +81,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
         payload = {"error": {"code": exc.code, "message": exc.message}}
-        if isinstance(exc, ProviderError) and exc.details:
-            payload["error"]["details"] = exc.details
+        if isinstance(exc, ProviderError):
+            # Sin esto, un 502 no deja rastro en los logs del contenedor:
+            # el cliente ve el JSON de error, pero el log solo muestra la
+            # línea de acceso de uvicorn con el status code, sin motivo.
+            _log.error(
+                "ProviderError[%s]: %s | details=%s",
+                exc.provider,
+                exc.message,
+                exc.details,
+            )
+            if exc.details:
+                payload["error"]["details"] = exc.details
         return JSONResponse(status_code=exc.status_code, content=payload)
