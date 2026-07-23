@@ -25,6 +25,7 @@ checkout_status_enum = postgresql.ENUM(
     "expired",
     "cancelled",
     name="checkout_status_enum",
+    create_type=False,
 )
 
 
