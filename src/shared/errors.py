@@ -38,6 +38,11 @@ class PaymentMethodNotFoundError(DomainError):
     code = "payment_method_not_found"
 
 
+class CheckoutNotFoundError(DomainError):
+    status_code = 404
+    code = "checkout_not_found"
+
+
 class AuthError(DomainError):
     status_code = 401
     code = "unauthorized"

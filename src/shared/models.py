@@ -41,6 +41,13 @@ class SubscriptionStatus(str, enum.Enum):
     expired = "expired"        # terminada
 
 
+class CheckoutStatus(str, enum.Enum):
+    pending = "pending"    # link creado, esperando que el usuario pague
+    paid = "paid"          # Conekta confirmó el pago (order.paid)
+    expired = "expired"    # venció sin pagarse (referencia OXXO/SPEI caducada)
+    cancelled = "cancelled"
+
+
 class PaymentCustomer(Base):
     __tablename__ = "payment_customers"
 
@@ -118,3 +125,47 @@ class SubscriptionEvent(Base):
     )
 
     subscription: Mapped[Subscription] = relationship(back_populates="events")
+
+
+class CheckoutOrder(Base):
+    """Link de pago (Conekta Checkout) para tarjeta, OXXO o SPEI.
+
+    A diferencia de `Subscription`, no es recurrente: Conekta no puede
+    volver a cobrar solo automáticamente ni con OXXO ni con SPEI. Cada
+    checkout pagado otorga `plan.period_days` de vigencia (ver
+    ConektaService._grant_period); el usuario debe generar un checkout
+    nuevo para renovar cuando expira.
+    """
+
+    __tablename__ = "checkout_orders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    provider: Mapped[Provider] = mapped_column(
+        SAEnum(Provider, name="provider_enum"), nullable=False
+    )
+    plan_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    checkout_id: Mapped[str] = mapped_column(
+        String(128), unique=True, index=True, nullable=False
+    )
+    checkout_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    provider_order_id: Mapped[str | None] = mapped_column(
+        String(128), index=True, nullable=True
+    )
+    status: Mapped[CheckoutStatus] = mapped_column(
+        SAEnum(CheckoutStatus, name="checkout_status_enum"),
+        default=CheckoutStatus.pending,
+        nullable=False,
+    )
+    payment_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    amount_mxn: Mapped[int] = mapped_column(nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="MXN", nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

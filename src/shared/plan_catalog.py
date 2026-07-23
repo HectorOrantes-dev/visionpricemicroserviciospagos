@@ -27,6 +27,10 @@ class Plan:
     description: str
     conekta_plan_id: str
     paypal_plan_id: str
+    # Vigencia que otorga un checkout pagado (OXXO/SPEI/tarjeta vía link) de
+    # este plan. No aplica a la suscripción recurrente de tarjeta (esa la
+    # controla directo la mensualidad de Conekta/PayPal).
+    period_days: int = 30
 
     def provider_plan_id(self, provider: Provider) -> str:
         return (

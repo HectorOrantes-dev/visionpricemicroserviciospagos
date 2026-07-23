@@ -11,6 +11,7 @@ from src.conekta.infraestructure.adapters.conekta_http_client import (
 from src.shared.config import Settings, get_settings
 from src.shared.database import get_session
 from src.shared.sql_repository import (
+    SqlCheckoutOrderRepository,
     SqlCustomerRepository,
     SqlSubscriptionRepository,
 )
@@ -24,5 +25,6 @@ def get_conekta_service(
         gateway=ConektaHttpClient(settings),
         subscriptions=SqlSubscriptionRepository(session),
         customers=SqlCustomerRepository(session),
+        checkouts=SqlCheckoutOrderRepository(session),
         settings=settings,
     )

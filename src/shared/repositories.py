@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from src.shared.models import (
+    CheckoutOrder,
+    CheckoutStatus,
     PaymentCustomer,
     Provider,
     Subscription,
@@ -73,3 +75,30 @@ class CustomerRepositoryPort(ABC):
 
     @abstractmethod
     async def delete_card(self, customer: PaymentCustomer) -> None: ...
+
+
+class CheckoutOrderRepositoryPort(ABC):
+    @abstractmethod
+    async def add(self, order: CheckoutOrder) -> CheckoutOrder: ...
+
+    @abstractmethod
+    async def get(self, checkout_db_id: str) -> CheckoutOrder | None: ...
+
+    @abstractmethod
+    async def get_for_user(
+        self, checkout_db_id: str, user_id: str
+    ) -> CheckoutOrder | None: ...
+
+    @abstractmethod
+    async def get_by_checkout_id(self, checkout_id: str) -> CheckoutOrder | None: ...
+
+    @abstractmethod
+    async def update_status(
+        self,
+        order: CheckoutOrder,
+        status: CheckoutStatus,
+        *,
+        payment_method: str | None = None,
+        provider_order_id: str | None = None,
+        paid_at: datetime | None = None,
+    ) -> CheckoutOrder: ...

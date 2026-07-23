@@ -5,17 +5,21 @@ CustomerRepositoryPort), nunca de httpx/SQLAlchemy directamente.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 from src.conekta.domain.repositories.conekta_gateway import ConektaGatewayPort
 from src.oauth.domain.authenticated_user import AuthenticatedUser
 from src.shared.config import Settings
 from src.shared.errors import (
+    CheckoutNotFoundError,
     DomainError,
     PaymentMethodNotFoundError,
     SubscriptionNotFoundError,
 )
 from src.shared.models import (
+    CheckoutOrder,
+    CheckoutStatus,
     PaymentCustomer,
     Provider,
     Subscription,
@@ -23,6 +27,7 @@ from src.shared.models import (
 )
 from src.shared.plan_catalog import get_plan
 from src.shared.repositories import (
+    CheckoutOrderRepositoryPort,
     CustomerRepositoryPort,
     SubscriptionRepositoryPort,
 )
@@ -53,11 +58,13 @@ class ConektaService:
         gateway: ConektaGatewayPort,
         subscriptions: SubscriptionRepositoryPort,
         customers: CustomerRepositoryPort,
+        checkouts: CheckoutOrderRepositoryPort,
         settings: Settings,
     ):
         self._gateway = gateway
         self._subs = subscriptions
         self._customers = customers
+        self._checkouts = checkouts
         self._settings = settings
 
     async def _ensure_customer(
@@ -155,10 +162,115 @@ class ConektaService:
         )
         await self._customers.delete_card(customer)
 
+    async def create_checkout(
+        self,
+        user: AuthenticatedUser,
+        plan_key: str,
+        allowed_payment_methods: list[str] | None = None,
+    ) -> CheckoutOrder:
+        """Crea un link de pago (Conekta Checkout): tarjeta, OXXO o SPEI.
+
+        No es recurrente. Cuando Conekta confirma el pago (webhook
+        `order.paid`), `_grant_period` otorga `plan.period_days` de vigencia
+        sobre la suscripción del usuario (crea una si no existía, o la
+        extiende si ya tenía una activa).
+        """
+        plan = get_plan(plan_key, self._settings)
+        methods = (
+            allowed_payment_methods
+            or self._settings.conekta_checkout_payment_methods_list
+        )
+
+        # Generado ANTES de llamar a Conekta para poder correlacionar el
+        # webhook contra esta orden vía metadata, sin depender de la forma
+        # exacta en que Conekta anide el id del checkout dentro del order.
+        internal_ref = str(uuid.uuid4())
+        expires_dt = _now() + timedelta(
+            hours=self._settings.conekta_checkout_expires_hours
+        )
+
+        remote = await self._gateway.create_checkout(
+            name=plan.description,
+            amount_cents=plan.price_mxn * 100,
+            currency=plan.currency,
+            allowed_payment_methods=methods,
+            customer_name=user.email or user.user_id,
+            customer_email=user.email,
+            expires_at=int(expires_dt.timestamp()),
+            metadata={"internal_ref": internal_ref, "user_id": user.user_id},
+        )
+
+        order = CheckoutOrder(
+            id=internal_ref,
+            user_id=user.user_id,
+            provider=Provider.conekta,
+            plan_key=plan_key,
+            checkout_id=remote.checkout_id,
+            checkout_url=remote.checkout_url,
+            amount_mxn=plan.price_mxn,
+            currency=plan.currency,
+            expires_at=expires_dt,
+        )
+        return await self._checkouts.add(order)
+
+    async def get_checkout(
+        self, user: AuthenticatedUser, checkout_db_id: str
+    ) -> CheckoutOrder:
+        order = await self._checkouts.get_for_user(checkout_db_id, user.user_id)
+        if order is None:
+            raise CheckoutNotFoundError("Checkout no encontrado.")
+        return order
+
+    async def _grant_period(
+        self, order: CheckoutOrder, period_days: int
+    ) -> Subscription:
+        now = _now()
+        existing = await self._subs.get_active_for_user(
+            order.user_id, Provider.conekta
+        )
+        if existing is not None and existing.plan_key == order.plan_key:
+            base = (
+                existing.current_period_end
+                if existing.current_period_end and existing.current_period_end > now
+                else now
+            )
+            subscription = await self._subs.update_status(
+                existing,
+                SubscriptionStatus.active,
+                current_period_end=base + timedelta(days=period_days),
+            )
+        else:
+            subscription = await self._subs.add(
+                Subscription(
+                    user_id=order.user_id,
+                    provider=Provider.conekta,
+                    plan_key=order.plan_key,
+                    provider_subscription_id=None,
+                    status=SubscriptionStatus.active,
+                )
+            )
+            subscription = await self._subs.update_status(
+                subscription,
+                SubscriptionStatus.active,
+                current_period_end=now + timedelta(days=period_days),
+            )
+        await self._subs.record_event(
+            subscription,
+            "checkout.paid",
+            {"checkout_id": order.checkout_id, "payment_method": order.payment_method},
+        )
+        return subscription
+
     async def handle_webhook(self, event: dict) -> None:
         """Procesa un evento de webhook de Conekta y actualiza el estado."""
         event_type = event.get("type", "unknown")
         obj = ((event.get("data") or {}).get("object")) or {}
+        obj_type = obj.get("object")
+
+        if obj_type == "order" or event_type.startswith(("order.", "checkout.")):
+            await self._handle_order_webhook(event_type, obj)
+            return
+
         provider_sub_id = obj.get("id")
         customer_id = obj.get("customer_id")
 
@@ -184,6 +296,48 @@ class ConektaService:
                 subscription, new_status, cancelled_at=cancelled_at
             )
         await self._subs.record_event(subscription, event_type, event)
+
+    async def _handle_order_webhook(self, event_type: str, obj: dict) -> None:
+        """Procesa eventos de una orden creada vía Checkout (tarjeta/OXXO/SPEI)."""
+        internal_ref = (obj.get("metadata") or {}).get("internal_ref")
+        order: CheckoutOrder | None = None
+        if internal_ref:
+            order = await self._checkouts.get(internal_ref)
+        if order is None:
+            # Sin metadata (p.ej. evento de prueba desde el dashboard) o
+            # checkout no encontrado: no hay nada que actualizar.
+            return
+
+        if order.status == CheckoutStatus.paid:
+            return  # ya procesado; evita duplicar la vigencia otorgada
+
+        if "paid" in event_type or obj.get("payment_status") == "paid":
+            charges = (obj.get("charges") or {}).get("data") or []
+            payment_method = None
+            if charges:
+                # `payment_method.type` trae "credit"/"debit" para tarjeta (no
+                # "card"), así que se deriva del `object`: "card_payment" ->
+                # "card", "cash_payment" -> "cash", "bank_transfer_payment"
+                # -> "bank_transfer". Verificado contra un charge real del
+                # sandbox (2026-07-23).
+                pm = charges[0].get("payment_method") or {}
+                pm_object = pm.get("object", "")
+                payment_method = (
+                    pm_object.removesuffix("_payment") if pm_object else pm.get("type")
+                )
+            order = await self._checkouts.update_status(
+                order,
+                CheckoutStatus.paid,
+                payment_method=payment_method,
+                provider_order_id=obj.get("id"),
+                paid_at=_now(),
+            )
+            plan = get_plan(order.plan_key, self._settings)
+            await self._grant_period(order, plan.period_days)
+        elif "expired" in event_type:
+            await self._checkouts.update_status(order, CheckoutStatus.expired)
+        elif "canceled" in event_type or "cancelled" in event_type:
+            await self._checkouts.update_status(order, CheckoutStatus.cancelled)
 
     async def _find_by_customer(self, customer_id: str) -> Subscription | None:
         # No hay índice directo customer->subscription en el puerto; en la práctica

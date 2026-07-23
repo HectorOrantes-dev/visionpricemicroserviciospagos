@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from src.conekta.domain.entities.conekta_entities import (
+    ConektaCheckout,
     ConektaCustomer,
     ConektaSubscription,
 )
@@ -122,4 +123,47 @@ class ConektaHttpClient(ConektaGatewayPort):
             status=data.get("status", "canceled"),
             plan_id=data.get("plan_id", ""),
             customer_id=customer_id,
+        )
+
+    async def create_checkout(
+        self,
+        *,
+        name: str,
+        amount_cents: int,
+        currency: str,
+        allowed_payment_methods: list[str],
+        customer_name: str,
+        customer_email: str | None,
+        expires_at: int,
+        metadata: dict,
+    ) -> ConektaCheckout:
+        customer_info: dict[str, Any] = {"name": customer_name}
+        if customer_email:
+            customer_info["email"] = customer_email
+
+        body: dict[str, Any] = {
+            "name": name,
+            "type": "PaymentLink",
+            "recurrent": False,
+            "allowed_payment_methods": allowed_payment_methods,
+            "expires_at": expires_at,
+            "needs_shipping_contact": False,
+            "order_template": {
+                "currency": currency,
+                "customer_info": customer_info,
+                "line_items": [
+                    {"name": name, "unit_price": amount_cents, "quantity": 1}
+                ],
+                "metadata": metadata,
+            },
+        }
+        data = await self._request("POST", "/checkouts", json=body)
+        # Verificado contra el sandbox real (2026-07-23): la API v2.1.0
+        # devuelve la URL hospedada en `url` (no `checkout_link`, aunque se
+        # deja como fallback por si un ambiente/versión distinta lo usa).
+        checkout_url = data.get("url") or data.get("checkout_link") or ""
+        return ConektaCheckout(
+            checkout_id=data["id"],
+            checkout_url=checkout_url,
+            status=data.get("status", "pending_payment"),
         )

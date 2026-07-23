@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.models import (
+    CheckoutOrder,
+    CheckoutStatus,
     PaymentCustomer,
     Provider,
     Subscription,
@@ -14,6 +16,7 @@ from src.shared.models import (
     SubscriptionStatus,
 )
 from src.shared.repositories import (
+    CheckoutOrderRepositoryPort,
     CustomerRepositoryPort,
     SubscriptionRepositoryPort,
 )
@@ -131,3 +134,49 @@ class SqlCustomerRepository(CustomerRepositoryPort):
         customer.card_last4 = None
         customer.default_source_id = None
         await self._session.commit()
+
+
+class SqlCheckoutOrderRepository(CheckoutOrderRepositoryPort):
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def add(self, order: CheckoutOrder) -> CheckoutOrder:
+        self._session.add(order)
+        await self._session.commit()
+        await self._session.refresh(order)
+        return order
+
+    async def get(self, checkout_db_id: str) -> CheckoutOrder | None:
+        return await self._session.get(CheckoutOrder, checkout_db_id)
+
+    async def get_for_user(
+        self, checkout_db_id: str, user_id: str
+    ) -> CheckoutOrder | None:
+        order = await self._session.get(CheckoutOrder, checkout_db_id)
+        if order is None or order.user_id != user_id:
+            return None
+        return order
+
+    async def get_by_checkout_id(self, checkout_id: str) -> CheckoutOrder | None:
+        stmt = select(CheckoutOrder).where(CheckoutOrder.checkout_id == checkout_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def update_status(
+        self,
+        order: CheckoutOrder,
+        status: CheckoutStatus,
+        *,
+        payment_method: str | None = None,
+        provider_order_id: str | None = None,
+        paid_at: datetime | None = None,
+    ) -> CheckoutOrder:
+        order.status = status
+        if payment_method is not None:
+            order.payment_method = payment_method
+        if provider_order_id is not None:
+            order.provider_order_id = provider_order_id
+        if paid_at is not None:
+            order.paid_at = paid_at
+        await self._session.commit()
+        await self._session.refresh(order)
+        return order

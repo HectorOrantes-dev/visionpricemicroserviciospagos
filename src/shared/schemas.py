@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from src.shared.models import Subscription
+from src.shared.models import CheckoutOrder, Subscription
 
 
 class SubscriptionOut(BaseModel):
@@ -33,4 +33,36 @@ class SubscriptionOut(BaseModel):
             current_period_end=sub.current_period_end,
             created_at=sub.created_at,
             cancelled_at=sub.cancelled_at,
+        )
+
+
+class CheckoutOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_key: str
+    checkout_id: str
+    checkout_url: str
+    status: str
+    payment_method: str | None
+    amount_mxn: int
+    currency: str
+    expires_at: datetime | None
+    created_at: datetime
+    paid_at: datetime | None
+
+    @classmethod
+    def of(cls, order: CheckoutOrder) -> "CheckoutOut":
+        return cls(
+            id=order.id,
+            plan_key=order.plan_key,
+            checkout_id=order.checkout_id,
+            checkout_url=order.checkout_url,
+            status=order.status.value,
+            payment_method=order.payment_method,
+            amount_mxn=order.amount_mxn,
+            currency=order.currency,
+            expires_at=order.expires_at,
+            created_at=order.created_at,
+            paid_at=order.paid_at,
         )

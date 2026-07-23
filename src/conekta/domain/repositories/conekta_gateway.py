@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.conekta.domain.entities.conekta_entities import (
+    ConektaCheckout,
     ConektaCustomer,
     ConektaSubscription,
 )
@@ -32,3 +33,17 @@ class ConektaGatewayPort(ABC):
     async def cancel_subscription(
         self, customer_id: str
     ) -> ConektaSubscription: ...
+
+    @abstractmethod
+    async def create_checkout(
+        self,
+        *,
+        name: str,
+        amount_cents: int,
+        currency: str,
+        allowed_payment_methods: list[str],
+        customer_name: str,
+        customer_email: str | None,
+        expires_at: int,
+        metadata: dict,
+    ) -> ConektaCheckout: ...

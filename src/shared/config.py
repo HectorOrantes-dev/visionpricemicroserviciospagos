@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     conekta_plan_equipos: str = ""
     conekta_api_base: str = "https://api.conekta.io"
     conekta_api_version: str = "2.1.0"
+    # Checkout (link de pago hospedado): tarjeta, OXXO y SPEI en una misma
+    # página. Métodos permitidos por defecto si el caller no especifica.
+    conekta_checkout_payment_methods: str = "card,cash,bank_transfer"
+    # Horas de vigencia del link/referencia OXXO/SPEI antes de expirar.
+    conekta_checkout_expires_hours: int = 72
 
     # --- PayPal ---
     paypal_client_id: str = ""
@@ -88,6 +93,14 @@ class Settings(BaseSettings):
         if not self.cors_allowed_origins.strip():
             return []
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def conekta_checkout_payment_methods_list(self) -> list[str]:
+        return [
+            m.strip()
+            for m in self.conekta_checkout_payment_methods.split(",")
+            if m.strip()
+        ]
 
     @property
     def paypal_api_base(self) -> str:

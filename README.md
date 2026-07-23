@@ -6,7 +6,10 @@ siguiendo **arquitectura hexagonal**.
 
 ## Capacidades
 
-- Activar mensualidad (suscripción) con Conekta o PayPal.
+- Activar mensualidad (suscripción) recurrente con Conekta (tarjeta) o PayPal.
+- Checkout hospedado de Conekta (link de pago) con **tarjeta, OXXO (efectivo) o
+  SPEI (transferencia)** en la misma pantalla — pago único que otorga vigencia
+  de plan al confirmarse (ver [Flujo Conekta Checkout](#flujo-conekta-checkout-tarjeta-oxxo-spei)).
 - Asociar / desasociar tarjeta (Conekta).
 - Cancelar suscripción / pagos.
 - Historial de suscripciones del usuario (cuántas ha tenido, estados).
@@ -75,8 +78,10 @@ Todos requieren `Authorization: Bearer <jwt>` salvo `/health` y los `/webhook`.
 | Método | Ruta                                      | Descripción                              |
 |--------|-------------------------------------------|------------------------------------------|
 | GET    | `/health`                                 | Liveness                                 |
-| POST   | `/conekta/subscriptions`                  | `{plan_key, card_token}` → activa        |
+| POST   | `/conekta/subscriptions`                  | `{plan_key, card_token}` → activa (recurrente, solo tarjeta) |
 | POST   | `/conekta/subscriptions/cancel`           | Cancela la activa del usuario            |
+| POST   | `/conekta/checkout`                       | `{plan_key, allowed_payment_methods?}` → `{checkout_url,...}` (tarjeta/OXXO/SPEI, pago único) |
+| GET    | `/conekta/checkout/{id}`                  | Estado de un checkout del usuario        |
 | DELETE | `/conekta/payment-method`                 | Desasocia la tarjeta                     |
 | POST   | `/conekta/webhook`                        | Eventos de Conekta                       |
 | POST   | `/paypal/subscriptions`                   | `{plan_key}` → devuelve `approval_url`   |
@@ -90,9 +95,37 @@ Todos requieren `Authorization: Bearer <jwt>` salvo `/health` y los `/webhook`.
 2. Rediriges al usuario a `approval_url`; aprueba en PayPal.
 3. PayPal envía `BILLING.SUBSCRIPTION.ACTIVATED` a `/paypal/webhook` → pasa a `active`.
 
-### Flujo Conekta (resumen)
+### Flujo Conekta (resumen) — tarjeta recurrente
 1. El frontend tokeniza la tarjeta con **Conekta.js** y obtiene `card_token`.
 2. `POST /conekta/subscriptions {plan_key, card_token}` → crea customer + suscripción `active`.
+   Conekta vuelve a cobrar automáticamente cada mes (esto SÍ es recurrente).
+
+### Flujo Conekta Checkout (tarjeta, OXXO, SPEI)
+
+OXXO y SPEI **no son recurrentes** en Conekta (no hay forma de que Conekta le
+vuelva a cobrar solo a una referencia de efectivo o una CLABE). Por eso este
+flujo usa el **Checkout hospedado** de Conekta (el "link de pago" del
+dashboard): una página de Conekta donde el usuario elige método, y un pago
+único que otorga `plan.period_days` (30 días por default) de vigencia sobre
+su suscripción — para renovar, genera un checkout nuevo.
+
+1. `POST /conekta/checkout {plan_key, allowed_payment_methods?}` (JWT del
+   usuario). `allowed_payment_methods` es opcional — subconjunto de
+   `["card","cash","bank_transfer"]` (`cash`=OXXO, `bank_transfer`=SPEI); si
+   se omite, usa `CONEKTA_CHECKOUT_PAYMENT_METHODS` del `.env` (los tres).
+   Responde `{id, checkout_url, status: "pending", expires_at, ...}`.
+2. Rediriges/abres `checkout_url` (página de Conekta) — ahí el usuario elige
+   tarjeta, OXXO o SPEI y completa el pago (o, si eligió OXXO/SPEI, ve la
+   referencia/barcode o CLABE para pagar después).
+3. Cuando Conekta confirma el pago, manda `order.paid` a `/conekta/webhook`.
+   El servicio identifica el checkout por `metadata.internal_ref` (se manda
+   al crear el checkout, no depende de cómo Conekta anide el id internamente),
+   marca el `checkout_order` como `paid` y otorga la vigencia (activa o
+   extiende la suscripción del usuario). Idempotente: si el webhook llega
+   duplicado, no se vuelve a otorgar vigencia.
+4. `GET /conekta/checkout/{id}` deja consultar el estado (`pending` / `paid`
+   / `expired` / `cancelled`) — útil para una pantalla de "esperando pago",
+   pero la activación real ocurre por el webhook, no por este endpoint.
 
 ## Webhooks
 
