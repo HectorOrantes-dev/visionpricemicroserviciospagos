@@ -1,6 +1,7 @@
 """Casos de uso del módulo PayPal."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from src.oauth.domain.authenticated_user import AuthenticatedUser
@@ -9,12 +10,25 @@ from src.shared.config import Settings
 from src.shared.entitlement_notifier import EntitlementNotifier
 from src.shared.errors import (
     DomainError,
+    ProviderError,
     SubscriptionNotFoundError,
     WebhookVerificationError,
 )
 from src.shared.models import Provider, Subscription, SubscriptionStatus
 from src.shared.plan_catalog import get_plan
 from src.shared.repositories import SubscriptionRepositoryPort
+
+_log = logging.getLogger("paypal.cancel")
+
+# Nombres de error que PayPal devuelve cuando el recurso ya no existe de su
+# lado (nunca se aprobó, o quedó huérfano por cualquier motivo). En ese caso
+# no hay nada que cancelar EN PayPal — insistir solo deja al usuario con una
+# suscripción fantasma que nunca podrá cancelar desde la app.
+_PAYPAL_RECURSO_INEXISTENTE = {"RESOURCE_NOT_FOUND", "INVALID_RESOURCE_ID"}
+
+
+def _es_recurso_inexistente(exc: ProviderError) -> bool:
+    return exc.details.get("name") in _PAYPAL_RECURSO_INEXISTENTE
 
 # Estados de PayPal -> estados internos
 _STATUS_MAP = {
@@ -123,10 +137,22 @@ class PayPalService:
         if subscription is None or subscription.provider != Provider.paypal:
             raise SubscriptionNotFoundError("Suscripción de PayPal no encontrada.")
         if subscription.provider_subscription_id:
-            await self._gateway.cancel_subscription(
-                subscription.provider_subscription_id,
-                reason="Cancelada por el usuario.",
-            )
+            try:
+                await self._gateway.cancel_subscription(
+                    subscription.provider_subscription_id,
+                    reason="Cancelada por el usuario.",
+                )
+            except ProviderError as exc:
+                if not _es_recurso_inexistente(exc):
+                    raise
+                _log.warning(
+                    "PayPal no tiene la suscripción %s (id interno %s, "
+                    "usuario %s) — probablemente nunca se aprobó. Se "
+                    "cancela solo del lado de Pagos.",
+                    subscription.provider_subscription_id,
+                    subscription.id,
+                    user.user_id,
+                )
         subscription = await self._subs.update_status(
             subscription, SubscriptionStatus.cancelled, cancelled_at=_now()
         )
