@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     payments_enabled: bool = True
     cors_allowed_origins: str = ""  # CSV: "https://app.visionprice.mx,https://..."
 
+    # --- Backend principal (visionpricebackend) ---
+    # Tras confirmar un pago (tarjeta recurrente o checkout de un solo pago),
+    # Pagos le avisa acá para que sincronice Usuario.plan_activo/vigencia_hasta
+    # (POST /api/v1/pagos/callback, protegido con X-Api-Key). Sin esto, el
+    # cobro sale bien pero el usuario nunca ve reflejado el plan en la app.
+    # main_api_webhook_key debe ser el MISMO valor que WEBHOOK_API_KEY del
+    # backend principal.
+    main_api_base_url: str = ""
+    main_api_webhook_key: str = ""
+
     # --- API Gateway (tráfico entrante vía el gateway) ---
     # Fase OPCIONAL: si está vacío, no-op. Si está seteado, valida X-Gateway-Key
     # CUANDO viene pero no lo exige todavía (dual-accept mientras el móvil

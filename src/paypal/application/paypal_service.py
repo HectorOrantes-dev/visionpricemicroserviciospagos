@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from src.oauth.domain.authenticated_user import AuthenticatedUser
 from src.paypal.domain.repositories.paypal_gateway import PayPalGatewayPort
 from src.shared.config import Settings
+from src.shared.entitlement_notifier import EntitlementNotifier
 from src.shared.errors import (
     DomainError,
     SubscriptionNotFoundError,
@@ -55,10 +56,20 @@ class PayPalService:
         gateway: PayPalGatewayPort,
         subscriptions: SubscriptionRepositoryPort,
         settings: Settings,
+        entitlement: EntitlementNotifier | None = None,
     ):
         self._gateway = gateway
         self._subs = subscriptions
         self._settings = settings
+        self._entitlement = entitlement or EntitlementNotifier(settings)
+
+    async def _notificar_entitlement(self, subscription: Subscription) -> None:
+        await self._entitlement.notificar(
+            user_id=subscription.user_id,
+            plan_key=subscription.plan_key,
+            status=subscription.status.value,
+            current_period_end=subscription.current_period_end,
+        )
 
     async def create_subscription(
         self, user: AuthenticatedUser, plan_key: str
@@ -107,6 +118,7 @@ class PayPalService:
             subscription, SubscriptionStatus.cancelled, cancelled_at=_now()
         )
         await self._subs.record_event(subscription, "subscription.cancelled", {})
+        await self._notificar_entitlement(subscription)
         return subscription
 
     async def handle_webhook(self, headers: dict, body: dict) -> None:
@@ -138,4 +150,5 @@ class PayPalService:
             subscription = await self._subs.update_status(
                 subscription, new_status, cancelled_at=cancelled_at
             )
+            await self._notificar_entitlement(subscription)
         await self._subs.record_event(subscription, event_type, body)

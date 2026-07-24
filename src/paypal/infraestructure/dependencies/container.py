@@ -8,6 +8,7 @@ from src.paypal.application.paypal_service import PayPalService
 from src.paypal.infraestructure.adapters.paypal_http_client import PayPalHttpClient
 from src.shared.config import Settings, get_settings
 from src.shared.database import get_session
+from src.shared.entitlement_notifier import EntitlementNotifier
 from src.shared.sql_repository import SqlSubscriptionRepository
 
 
@@ -19,4 +20,5 @@ def get_paypal_service(
         gateway=PayPalHttpClient(settings),
         subscriptions=SqlSubscriptionRepository(session),
         settings=settings,
+        entitlement=EntitlementNotifier(settings),
     )

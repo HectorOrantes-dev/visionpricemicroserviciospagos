@@ -25,6 +25,7 @@ from src.shared.models import (
     Subscription,
     SubscriptionStatus,
 )
+from src.shared.entitlement_notifier import EntitlementNotifier
 from src.shared.plan_catalog import get_plan
 from src.shared.repositories import (
     CheckoutOrderRepositoryPort,
@@ -68,12 +69,22 @@ class ConektaService:
         customers: CustomerRepositoryPort,
         checkouts: CheckoutOrderRepositoryPort,
         settings: Settings,
+        entitlement: EntitlementNotifier | None = None,
     ):
         self._gateway = gateway
         self._subs = subscriptions
         self._customers = customers
         self._checkouts = checkouts
         self._settings = settings
+        self._entitlement = entitlement or EntitlementNotifier(settings)
+
+    async def _notificar_entitlement(self, subscription: Subscription) -> None:
+        await self._entitlement.notificar(
+            user_id=subscription.user_id,
+            plan_key=subscription.plan_key,
+            status=subscription.status.value,
+            current_period_end=subscription.current_period_end,
+        )
 
     async def _ensure_customer(
         self, user: AuthenticatedUser, card_token: str
@@ -137,6 +148,9 @@ class ConektaService:
         await self._subs.record_event(
             subscription, "subscription.created", {"status": remote.status}
         )
+        # Conekta ya puede devolver "active" de forma síncrona (sin esperar
+        # webhook) — avisa al backend principal de una vez.
+        await self._notificar_entitlement(subscription)
         return subscription
 
     async def cancel(self, user: AuthenticatedUser) -> Subscription:
@@ -157,6 +171,7 @@ class ConektaService:
             cancelled_at=_now(),
         )
         await self._subs.record_event(subscription, "subscription.cancelled", {})
+        await self._notificar_entitlement(subscription)
         return subscription
 
     async def remove_card(self, user: AuthenticatedUser) -> None:
@@ -267,6 +282,7 @@ class ConektaService:
             "checkout.paid",
             {"checkout_id": order.checkout_id, "payment_method": order.payment_method},
         )
+        await self._notificar_entitlement(subscription)
         return subscription
 
     async def handle_webhook(self, event: dict) -> None:
@@ -303,6 +319,7 @@ class ConektaService:
             subscription = await self._subs.update_status(
                 subscription, new_status, cancelled_at=cancelled_at
             )
+            await self._notificar_entitlement(subscription)
         await self._subs.record_event(subscription, event_type, event)
 
     async def _handle_order_webhook(self, event_type: str, obj: dict) -> None:
