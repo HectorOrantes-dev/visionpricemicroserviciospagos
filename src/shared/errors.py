@@ -79,18 +79,22 @@ class WebhookVerificationError(DomainError):
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
-    async def _handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
+    async def _handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
         payload = {"error": {"code": exc.code, "message": exc.message}}
-        if isinstance(exc, ProviderError):
-            # Sin esto, un 502 no deja rastro en los logs del contenedor:
-            # el cliente ve el JSON de error, pero el log solo muestra la
-            # línea de acceso de uvicorn con el status code, sin motivo.
-            _log.error(
-                "ProviderError[%s]: %s | details=%s",
-                exc.provider,
-                exc.message,
-                exc.details,
-            )
-            if exc.details:
-                payload["error"]["details"] = exc.details
+        # Sin esto, un error de dominio no deja NINGÚN rastro en el log del
+        # contenedor: el cliente ve el JSON, pero uvicorn solo imprime la
+        # línea de acceso con el status code, nunca el motivo. >=500 como
+        # error (fallo nuestro/del proveedor); <500 como warning (mala
+        # petición del cliente, pero útil para diagnosticar sin reproducir).
+        nivel = _log.error if exc.status_code >= 500 else _log.warning
+        nivel(
+            "%s %s -> %s %s: %s",
+            request.method,
+            request.url.path,
+            exc.status_code,
+            exc.code,
+            exc.message,
+        )
+        if isinstance(exc, ProviderError) and exc.details:
+            payload["error"]["details"] = exc.details
         return JSONResponse(status_code=exc.status_code, content=payload)
