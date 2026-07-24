@@ -106,7 +106,20 @@ class PayPalService:
         return PayPalSubscriptionResult(subscription, remote.approval_url)
 
     async def cancel(self, user: AuthenticatedUser, subscription_id: str) -> Subscription:
+        # `subscription_id` debería ser el id INTERNO de Pagos (el campo `id`
+        # de SubscriptionOut), pero es fácil confundirlo con
+        # `provider_subscription_id` (el id de PayPal, ej. "I-XXXX...") ya
+        # que ambos son strings opacos y el cliente los tiene los dos a la
+        # mano. Fallback: si no matchea como id interno, prueba como id de
+        # PayPal — evita cancelaciones que fallan en silencio por mandar el
+        # id equivocado.
         subscription = await self._subs.get_for_user(subscription_id, user.user_id)
+        if subscription is None:
+            candidate = await self._subs.get_by_provider_id(
+                Provider.paypal, subscription_id
+            )
+            if candidate is not None and candidate.user_id == user.user_id:
+                subscription = candidate
         if subscription is None or subscription.provider != Provider.paypal:
             raise SubscriptionNotFoundError("Suscripción de PayPal no encontrada.")
         if subscription.provider_subscription_id:
