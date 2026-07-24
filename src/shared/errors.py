@@ -87,14 +87,16 @@ def register_exception_handlers(app: FastAPI) -> None:
         # error (fallo nuestro/del proveedor); <500 como warning (mala
         # petición del cliente, pero útil para diagnosticar sin reproducir).
         nivel = _log.error if exc.status_code >= 500 else _log.warning
+        detalles = exc.details if isinstance(exc, ProviderError) and exc.details else None
         nivel(
-            "%s %s -> %s %s: %s",
+            "%s %s -> %s %s: %s%s",
             request.method,
             request.url.path,
             exc.status_code,
             exc.code,
             exc.message,
+            f" | details={detalles}" if detalles else "",
         )
-        if isinstance(exc, ProviderError) and exc.details:
-            payload["error"]["details"] = exc.details
+        if detalles:
+            payload["error"]["details"] = detalles
         return JSONResponse(status_code=exc.status_code, content=payload)
